@@ -7,6 +7,7 @@ import {casesPage} from './pages/cases.js';
 import {bindEditor, editorPage} from './pages/editor.js';
 import {runsPage} from './pages/runs.js';
 import {bindEvidence, evidencePage} from './pages/evidence.js';
+import {bindCorrections} from './pages/corrections.js';
 import {go, route} from './router/hash.js';
 import {submit} from './hooks/submit.js';
 import {esc} from './utils/dom.js';
@@ -40,6 +41,22 @@ async function refresh() {
     const result = await Promise.all([state.spec || api('/spec'),api('/cases'),api('/runs'),api('/evidence'),api('/audit')]);
     if (revision !== key) return;
     [state.spec,state.cases,state.runs,state.evidence,state.audit]=result;
+    state.corrections = null;
+    if (page==='cases') {
+      const selected = state.cases.find(row=>row.id===id) || state.cases[0];
+      if (selected) {
+        state.corrections = await api(`/cases/${selected.id}/corrections`);
+        if (revision !== key) return;
+      }
+    }
+    if (page==='evidence') {
+      const current = state.evidence.find(row=>row.id===id) || state.evidence[0];
+      const run = current && state.runs.find(row=>row.id===current.run_id);
+      if (run) {
+        state.corrections = await api(`/cases/${run.case_id}/corrections`);
+        if (revision !== key) return;
+      }
+    }
   } catch (error) {
     if (revision !== key) return;
     if (!document.getElementById('message')) app.innerHTML='<main><div id="message" role="alert"></div><button id="retry">重试</button></main>';
@@ -53,6 +70,7 @@ async function refresh() {
     <div class="workspace"><nav aria-label="业务模块">${navigation}</nav><main><div id="message" role="alert"></div>${pages[page](state,id)}</main></div>`;
   document.getElementById('logout').addEventListener('click',()=>{setSession(null); void refresh();});
   if (page==='editor') bindEditor(state, api, fail);
+  if (page==='cases') bindCorrections(state, api, refresh, fail);
   if (page==='evidence') bindEvidence(api, refresh, fail);
   if (page==='runs') {
     document.getElementById('refresh').addEventListener('click', refresh);

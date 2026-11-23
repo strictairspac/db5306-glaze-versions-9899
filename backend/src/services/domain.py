@@ -1,5 +1,6 @@
 """回放釉料配方读快照，输出按配方归组的历史回收预检。"""
 
+from . import corrections
 from .glaze_history import (
     Version,
     collectible_prefix_size,
@@ -24,10 +25,16 @@ SPEC = {
         "commit_seq": "提交序号",
         "operation": "版本操作",
         "recipe": "釉料配方",
+        "effective_from": "生效水位",
+        "effective_to": "失效水位",
+        "supersedes": "替代更正",
+        "request_id": "提交单号",
     },
     "guidance": (
         "从同一批台账录入已提交水位、配方版本和仍需复读的活跃快照。"
         "操作填「写入」或「删除」，删除行的配方留空。按配方整批复核回收前缀。"
+        "质检发现旧釉方抄错时，在档案页提交更正单：按读取水位区间补正配方，"
+        "可与已生效更正交叠但须逐条指明所替代的更正，替换只作用于交叠段。"
     ),
     "sample": {
         "head_seq": 90,
@@ -59,9 +66,17 @@ def validate(payload):
     parse_ledger(payload)
 
 
-def solve(payload, engine):
-    """Simulate collection in the supplied ledger by removing planned prefixes."""
+def solve(payload, engine=None, correction_snapshot=None):
+    """Simulate collection in the supplied ledger by removing planned prefixes.
+
+    ``correction_snapshot`` is ``(batch_seq, CorrectionLine list)``.  Only lines
+    with ``batch_seq`` at or below the stamped batch take part, so a report
+    always reflects one coherent batch of effective corrections.
+    """
     ledger = parse_ledger(payload)
+    batch, correction_lines = correction_snapshot or (0, [])
+    applied_lines = [line for line in correction_lines if line.batch_seq <= batch]
+    segments = corrections.effective_segments(applied_lines) if applied_lines else {}
     watermark = ledger.watermark
     reads = [
         ("活跃快照", snapshot.snapshot_id, snapshot.read_seq)
@@ -103,52 +118,64 @@ def solve(payload, engine):
             visible = visible_version(hit)
             if visible != visible_version(after):
                 raise RuntimeError(f"配方 {formula_id} 在读取水位 {read_seq} 的可见性发生变化")
+            applied = corrections.segment_at(segments, formula_id, read_seq) if visible is not None else None
             if read_type == "当前读" and visible is not None:
                 current_count += 1
-            read_rows.append({
+            row = {
                 "配方编号": formula_id,
                 "读取类型": read_type,
                 "快照编号": snapshot_id,
                 "读取水位": read_seq,
                 "判定": _read_status(hit),
                 "命中提交序号": hit.commit_seq if hit is not None else None,
-                "釉料配方": visible.recipe if visible is not None else None,
+                "釉料配方": applied.line.recipe if applied is not None else (visible.recipe if visible is not None else None),
                 "回收后命中序号": after.commit_seq if after is not None else None,
                 "前后可见配方一致": "是",
-            })
+            }
+            if applied is not None:
+                row["更正编号"] = applied.line.id
+                row["更正单"] = applied.line.order_id
+                row["更正批次"] = applied.line.batch_seq
+                row["替代更正"] = "、".join(map(str, applied.line.supersedes)) or None
+            read_rows.append(row)
 
     total_versions = len(version_rows)
     sources = [
         snapshot.snapshot_id for snapshot in ledger.snapshots if snapshot.read_seq == watermark
     ]
-    return {
-        "summary": (
-            f"回收低水位为 {watermark}，{len(batch_rows)} 个配方批次共 {collect_count} 条版本可回收。"
-            f"已核对 {len(read_rows)} 条配方读取，模拟回收前后的可见配方一致。"
-        ),
-        "metrics": {
+    metrics = {
+        "回收低水位": watermark,
+        "活跃快照数": len(ledger.snapshots),
+        "配方版本数": total_versions,
+        "历史回收批次数": len(batch_rows),
+        "可回收版本数": collect_count,
+        "保留版本数": total_versions - collect_count,
+        "当前可见配方数": current_count,
+        "读取核对数": len(read_rows),
+    }
+    summary = (
+        f"回收低水位为 {watermark}，{len(batch_rows)} 个配方批次共 {collect_count} 条版本可回收。"
+        f"已核对 {len(read_rows)} 条配方读取，模拟回收前后的可见配方一致。"
+    )
+    sections = [
+        {"title": "回收低水位依据", "rows": [{
+            "已提交水位": ledger.head_seq,
             "回收低水位": watermark,
             "活跃快照数": len(ledger.snapshots),
-            "配方版本数": total_versions,
-            "历史回收批次数": len(batch_rows),
-            "可回收版本数": collect_count,
-            "保留版本数": total_versions - collect_count,
-            "当前可见配方数": current_count,
-            "读取核对数": len(read_rows),
-        },
-        "sections": [
-            {"title": "回收低水位依据", "rows": [{
-                "已提交水位": ledger.head_seq,
-                "回收低水位": watermark,
-                "活跃快照数": len(ledger.snapshots),
-                "低水位来源": "最早活跃快照" if sources else "无活跃快照，取已提交水位",
-                "限制回收的快照": "、".join(sources) if sources else None,
-            }]},
-            {"title": "配方读取与回收后复核", "rows": read_rows},
-            {"title": "逐版本留存依据", "rows": version_rows},
-            {"title": "待核准回收批单", "rows": batch_rows},
-        ],
-    }
+            "低水位来源": "最早活跃快照" if sources else "无活跃快照，取已提交水位",
+            "限制回收的快照": "、".join(sources) if sources else None,
+        }]},
+        {"title": "配方读取与回收后复核", "rows": read_rows},
+        {"title": "逐版本留存依据", "rows": version_rows},
+        {"title": "待核准回收批单", "rows": batch_rows},
+    ]
+    if applied_lines:
+        coverage = corrections.coverage_rows(segments)
+        metrics["更正批次"] = batch
+        metrics["生效更正段数"] = len(coverage)
+        summary += f"配方读取按更正批次 {batch} 补正，共 {len(coverage)} 段生效更正。"
+        sections.insert(3, {"title": "生效更正与来路", "rows": coverage})
+    return {"summary": summary, "metrics": metrics, "sections": sections}
 
 
 def _read_status(hit: Version | None) -> str:

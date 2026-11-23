@@ -2,6 +2,7 @@ import {heading, panel} from '../components/common/heading.js';
 import {entries, records} from '../components/common/records.js';
 import {date, esc} from '../utils/dom.js';
 import {topic} from '../constants/project.js';
+import {correctionPanel} from './corrections.js';
 
 export function casesPage(state, identity) {
   const {spec, session, cases, runs} = state;
@@ -17,5 +18,6 @@ export function casesPage(state, identity) {
   return `${heading(topic.modules[0], spec.summary, operator?'<a class="button" href="#editor">建立档案</a>':'')}
     <div class="spread"><section aria-label="档案目录">${records([spec.entity_labels[0], '经办', '建立时间'], rows, '尚未建立档案。经办员可以从演示资料建立第一份。')}</section>
     <aside class="brief">${instruction || `<h2>${esc(spec.customer)}</h2>`}${selected?`<p class="note">该档案记录 ${runs.filter(row=>row.case_id===selected.id).length} 次执行。</p>`:''}${selected&&operator?`<a href="#editor/${selected.id}">复制为新档案</a>`:''}</aside></div>
-    ${input ? `<div class="inspection">${input}</div>`:''}`;
+    ${input ? `<div class="inspection">${input}</div>`:''}
+    ${selected ? correctionPanel(state, selected) : ''}`;
 }

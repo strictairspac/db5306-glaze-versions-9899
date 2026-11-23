@@ -49,6 +49,16 @@ def start_run(case_id: int, actor=Depends(operator)):
     return workflow.enqueue(case_id, actor)
 
 
+@router.get('/cases/{case_id}/corrections')
+def list_corrections(case_id: int, _=Depends(current_user)):
+    return workflow.corrections_for(case_id)
+
+
+@router.post('/cases/{case_id}/corrections', status_code=201)
+def submit_corrections(case_id: int, body: dict, actor=Depends(operator)):
+    return workflow.correct(case_id, body, actor)
+
+
 @router.get('/evidence')
 def list_evidence(_=Depends(current_user)):
     return workflow.recent(evidence)
@@ -62,6 +72,11 @@ def export_evidence(identity: int, _=Depends(current_user)):
 @router.post('/evidence/{identity}/review')
 def review_evidence(identity: int, form: ReviewForm, actor=Depends(reviewer)):
     return workflow.review(identity, form.note, actor)
+
+
+@router.post('/evidence/{identity}/refresh')
+def refresh_evidence(identity: int, actor=Depends(operator)):
+    return workflow.refresh_evidence(identity, actor)
 
 
 @router.get('/audit')

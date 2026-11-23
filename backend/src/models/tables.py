@@ -1,5 +1,5 @@
-from sqlalchemy import (JSON, Column, ForeignKey, Integer, MetaData, String,
-                        Table, Text)
+from sqlalchemy import (JSON, BigInteger, Column, ForeignKey, Integer,
+                        MetaData, String, Table, Text)
 
 schema = MetaData()
 users = Table('accounts', schema,
@@ -29,6 +29,7 @@ evidence = Table('business_evidence', schema,
     Column('run_id', ForeignKey('business_runs.id'), nullable=False, unique=True),
     Column('report', JSON, nullable=False),
     Column('digest', String(64), nullable=False),
+    Column('correction_batch', Integer),
     Column('reviewer', String(40)),
     Column('review_note', String(500)),
     Column('reviewed_at', String(32)))
@@ -38,3 +39,26 @@ audit = Table('audit_events', schema,
     Column('action', String(32), nullable=False),
     Column('reference', String(50), nullable=False),
     Column('created_at', String(32), nullable=False))
+correction_state = Table('correction_state', schema,
+    Column('id', Integer, primary_key=True),
+    Column('case_id', ForeignKey('business_cases.id'), nullable=False, unique=True),
+    Column('current_batch', Integer, nullable=False),
+    Column('updated_at', String(32), nullable=False))
+correction_orders = Table('correction_orders', schema,
+    Column('id', Integer, primary_key=True),
+    Column('request_id', String(64), nullable=False, unique=True),
+    Column('case_id', ForeignKey('business_cases.id'), nullable=False, index=True),
+    Column('batch_seq', Integer, nullable=False),
+    Column('note', String(500), nullable=False),
+    Column('author', String(40), nullable=False),
+    Column('created_at', String(32), nullable=False))
+correction_lines = Table('correction_lines', schema,
+    Column('id', Integer, primary_key=True),
+    Column('order_id', ForeignKey('correction_orders.id'), nullable=False, index=True),
+    Column('case_id', ForeignKey('business_cases.id'), nullable=False, index=True),
+    Column('batch_seq', Integer, nullable=False, index=True),
+    Column('formula_id', String(80), nullable=False),
+    Column('effective_from', BigInteger, nullable=False),
+    Column('effective_to', BigInteger, nullable=False),
+    Column('recipe', Text, nullable=False),
+    Column('supersedes', Text, nullable=False))
